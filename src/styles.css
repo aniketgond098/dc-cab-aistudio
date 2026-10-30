@@ -1,0 +1,161 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Archivo", "Manrope", ui-sans-serif, sans-serif;
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-tint: var(--primary-tint);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-charcoal: var(--charcoal);
+  --color-hairline: var(--hairline);
+  --color-whatsapp: var(--whatsapp);
+}
+
+:root {
+  --radius: 0.25rem;
+  --background: oklch(0.12 0.005 285);
+  --charcoal: oklch(0.17 0.006 285);
+  --surface: oklch(0.21 0.008 270);
+  --foreground: oklch(0.96 0.012 85);
+  --card: oklch(0.17 0.006 285);
+  --card-foreground: oklch(0.96 0.012 85);
+  --popover: oklch(0.17 0.006 285);
+  --popover-foreground: oklch(0.96 0.012 85);
+  --primary: oklch(0.58 0.24 27);
+  --primary-foreground: oklch(1 0 0);
+  --primary-tint: oklch(0.66 0.2 27);
+  --secondary: oklch(0.21 0.008 270);
+  --secondary-foreground: oklch(0.96 0.012 85);
+  --muted: oklch(0.21 0.008 270);
+  --muted-foreground: oklch(0.72 0.008 285);
+  --accent: oklch(0.58 0.24 27);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.6 0.2 27);
+  --destructive-foreground: oklch(0.97 0.01 85);
+  --border: oklch(1 0 0 / 8%);
+  --hairline: oklch(1 0 0 / 14%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.58 0.24 27);
+  --whatsapp: oklch(0.62 0.15 150);
+  --scrim: linear-gradient(180deg, oklch(0.12 0.005 285 / 0.55) 0%, oklch(0.12 0.005 285 / 0.1) 40%, oklch(0.12 0.005 285 / 0.95) 100%);
+  --scrim-side: linear-gradient(90deg, oklch(0.12 0.005 285 / 0.92) 0%, oklch(0.12 0.005 285 / 0.4) 55%, oklch(0.12 0.005 285 / 0) 100%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.035em;
+  line-height: 0.92;
+}
+
+@utility eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+@utility bg-scrim {
+  background: var(--scrim);
+}
+
+@utility bg-scrim-side {
+  background: var(--scrim-side);
+}
+
+@utility container-x {
+  width: 100%;
+  max-width: 88rem;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+  @media (width >= 48rem) {
+    padding-inline: 2.5rem;
+  }
+}
+
+@utility reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 1s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 1s cubic-bezier(0.2, 0.7, 0.2, 1);
+  &.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slow-zoom {
+  from { transform: scale(1.12); }
+  to { transform: scale(1); }
+}
+@utility animate-slow-zoom {
+  animation: slow-zoom 2.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes dash {
+  to { stroke-dashoffset: 0; }
+}
+@utility arc-draw {
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: dash 2.4s cubic-bezier(0.5, 0, 0.2, 1) forwards;
+}
+
+@keyframes pulse-ring {
+  0% { r: 2; opacity: 0.8; }
+  100% { r: 9; opacity: 0; }
+}
+@utility pulse-ring {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .animate-slow-zoom, .arc-draw, .pulse-ring { animation: none; stroke-dashoffset: 0; }
+}
