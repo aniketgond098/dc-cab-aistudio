@@ -11,22 +11,23 @@ const catalogLocation = {
 };
 
 const suggestion = {
-  mapbox_id: "mapbox-location-1",
-  name: "Mumbai Airport",
-  place_formatted: "Terminal 2, Mumbai",
-  coordinates: [72.8656, 19.0896],
+  type: "Feature",
+  properties: {
+    osm_id: 101,
+    name: "Mumbai Airport",
+    city: "Mumbai",
+    state: "Maharashtra",
+    country: "India",
+  },
+  geometry: {
+    coordinates: [72.8656, 19.0896],
+  },
 };
 
 const geocodingResponse = (features: unknown[] = [suggestion]) =>
   ({
-    features: features.map((feature) => ({
-      geometry: { coordinates: (feature as typeof suggestion).coordinates },
-      properties: {
-        mapbox_id: (feature as typeof suggestion).mapbox_id,
-        name: (feature as typeof suggestion).name,
-        place_formatted: (feature as typeof suggestion).place_formatted,
-      },
-    })),
+    type: "FeatureCollection",
+    features,
   }) as const;
 
 function jsonResponse(body: unknown, status = 200) {
@@ -36,16 +37,9 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-async function loadSearch(mapboxToken: string | null = "pk.test-token") {
-  if (mapboxToken) vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", mapboxToken);
-  else vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "");
+async function startSearch() {
   vi.resetModules();
   const { LocationSearch } = await import("@/components/booking/LocationSearch");
-  return LocationSearch;
-}
-
-async function startSearch() {
-  const LocationSearch = await loadSearch();
   const onChange = vi.fn();
   render(<LocationSearch label="From" value={null} onChange={onChange} />);
   fireEvent.change(screen.getByRole("combobox", { name: "From" }), {
@@ -61,13 +55,14 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("LocationSearch catalog validation", () => {
+describe("LocationSearch catalog validation with pluggable geocoding", () => {
   it("selects a matching active catalog location as bookable", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/catalog/locations"))
         return jsonResponse({ data: [catalogLocation] });
-      if (url.includes("/geocode/v6/forward")) return jsonResponse(geocodingResponse([]));
+      if (url.includes("photon.komoot.io") || url.includes("/api"))
+        return jsonResponse(geocodingResponse([]));
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -86,7 +81,7 @@ describe("LocationSearch catalog validation", () => {
     );
   });
 
-  it("immediately selects a catalog location without coordinates while Mapbox is pending", async () => {
+  it("immediately selects a catalog location without coordinates while geocoding is pending", async () => {
     const locationWithoutCoordinates = {
       ...catalogLocation,
       latitude: null,
@@ -97,7 +92,8 @@ describe("LocationSearch catalog validation", () => {
       const url = String(input);
       if (url.includes("/api/v1/catalog/locations"))
         return Promise.resolve(jsonResponse({ data: [locationWithoutCoordinates] }));
-      if (url.includes("/geocode/v6/forward")) return new Promise<Response>(() => {});
+      if (url.includes("photon.komoot.io") || url.includes("/api"))
+        return new Promise<Response>(() => {});
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -120,12 +116,9 @@ describe("LocationSearch catalog validation", () => {
       "false",
     );
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/searchbox/"))).toBe(
-      false,
-    );
   });
 
-  it("keeps a selected catalog location when the Mapbox search request fails", async () => {
+  it("keeps a selected catalog location when the geocoding request fails", async () => {
     const locationWithoutCoordinates = {
       ...catalogLocation,
       latitude: null,
@@ -135,7 +128,7 @@ describe("LocationSearch catalog validation", () => {
       const url = String(input);
       if (url.includes("/api/v1/catalog/locations"))
         return jsonResponse({ data: [locationWithoutCoordinates] });
-      if (url.includes("/geocode/v6/forward")) return jsonResponse({}, 401);
+      if (url.includes("photon.komoot.io") || url.includes("/api")) return jsonResponse({}, 503);
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -153,73 +146,20 @@ describe("LocationSearch catalog validation", () => {
     );
   });
 
-  it("selects catalog locations when the public Mapbox token is unavailable", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/v1/catalog/locations"))
-        return jsonResponse({ data: [{ ...catalogLocation, latitude: null, longitude: null }] });
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const LocationSearch = await loadSearch(null);
-    const onChange = vi.fn();
-    render(<LocationSearch label="From" value={null} onChange={onChange} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "From" }), {
-      target: { value: "Mumbai" },
-    });
-    fireEvent.click(await screen.findByRole("option", { name: /Mumbai Airport/ }));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "location-1", coordinates: null, bookable: true }),
-    );
-    expect(screen.getByRole("combobox", { name: "From" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses India-filtered Geocoding v6 without Search Box session parameters", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/v1/catalog/locations")) return jsonResponse({ data: [] });
-      if (url.includes("/geocode/v6/forward")) return jsonResponse(geocodingResponse([]));
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await startSearch();
-    await vi.waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([input]) => String(input).includes("/geocode/v6/forward")),
-      ).toBe(true),
-    );
-
-    const requestUrl = new URL(
-      String(
-        fetchMock.mock.calls.find(([input]) => String(input).includes("/geocode/v6/forward"))?.[0],
-      ),
-    );
-    expect(requestUrl.hostname).toBe("api.mapbox.com");
-    expect(requestUrl.searchParams.get("q")).toBe("Mumbai");
-    expect(requestUrl.searchParams.get("country")).toBe("in");
-    expect(requestUrl.searchParams.get("worldview")).toBe("in");
-    expect(requestUrl.searchParams.get("access_token")).toBe("pk.test-token");
-    expect(requestUrl.searchParams.has("session_token")).toBe(false);
-  });
-
-  it("does not let a stale Mapbox geocode lookup overwrite a newer catalog selection", async () => {
+  it("does not let a stale geocode lookup overwrite a newer catalog selection", async () => {
     let finishCatalogMatch: ((response: Response) => void) | undefined;
     let catalogLookupCount = 0;
     const staleCatalogLocation = {
       ...catalogLocation,
-      id: "stale-mapbox-location",
+      id: "stale-location",
       name: "Mumbai Airport Other Entrance",
     };
     const staleSuggestion = {
       ...suggestion,
-      name: "Mumbai Airport Other Entrance",
+      properties: {
+        ...suggestion.properties,
+        name: "Mumbai Airport Other Entrance",
+      },
     };
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -231,7 +171,7 @@ describe("LocationSearch catalog validation", () => {
           finishCatalogMatch = resolve;
         });
       }
-      if (url.includes("/geocode/v6/forward"))
+      if (url.includes("photon.komoot.io") || url.includes("/api"))
         return Promise.resolve(jsonResponse(geocodingResponse([staleSuggestion])));
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -260,7 +200,8 @@ describe("LocationSearch catalog validation", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/catalog/locations")) return jsonResponse({ data: [] });
-      if (url.includes("/geocode/v6/forward")) return jsonResponse(geocodingResponse([suggestion]));
+      if (url.includes("photon.komoot.io") || url.includes("/api"))
+        return jsonResponse(geocodingResponse([suggestion]));
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -274,7 +215,7 @@ describe("LocationSearch catalog validation", () => {
   });
 
   it.each(["http", "malformed", "network"])(
-    "keeps the temporary catalog error visible when Mapbox suggestions succeed (%s failure)",
+    "keeps the temporary catalog error visible when geocoding suggestions succeed (%s failure)",
     async (failure) => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
@@ -283,7 +224,7 @@ describe("LocationSearch catalog validation", () => {
           if (failure === "malformed") return jsonResponse({ data: { locations: [] } });
           throw new TypeError("fetch failed");
         }
-        if (url.includes("/geocode/v6/forward"))
+        if (url.includes("photon.komoot.io") || url.includes("/api"))
           return jsonResponse(geocodingResponse([suggestion]));
         throw new Error(`Unexpected request: ${url}`);
       });

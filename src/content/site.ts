@@ -10,9 +10,73 @@ import europe from "@/assets/dest-europe.jpg";
 import asia from "@/assets/dest-asia.jpg";
 import hero from "@/assets/hero.jpg";
 
+export type ContactPhone = {
+  raw: string;
+  display: string;
+  telHref?: string;
+  whatsappHref: string;
+  allowCall?: boolean;
+};
+
+export type LeadershipContact = {
+  name: string;
+  role: string;
+  phones: ContactPhone[];
+  linkedin?: {
+    href: string;
+    label: string;
+  };
+};
+
+export const leadershipContacts: LeadershipContact[] = [
+  {
+    name: "Kunal Suri",
+    role: "Co-Founder & Manager – Operations",
+    phones: [
+      {
+        raw: "+91 9987117974",
+        display: "+91 99871 17974",
+        telHref: "tel:+919987117974",
+        whatsappHref: "https://wa.me/919987117974",
+        allowCall: true,
+      },
+      {
+        raw: "+91 8446173577",
+        display: "+91 84461 73577",
+        whatsappHref: "https://wa.me/918446173577",
+        allowCall: false,
+      },
+    ],
+    linkedin: {
+      href: "https://linkedin.com/in/kunal-suri-569224408",
+      label: "LinkedIn Profile",
+    },
+  },
+  {
+    name: "Suresh Mahto",
+    role: "Founder",
+    phones: [
+      {
+        raw: "+91 8779728005",
+        display: "+91 87797 28005",
+        telHref: "tel:+918779728005",
+        whatsappHref: "https://wa.me/918779728005",
+        allowCall: true,
+      },
+      {
+        raw: "+91 9870821082",
+        display: "+91 98708 21082",
+        telHref: "tel:+919870821082",
+        whatsappHref: "https://wa.me/919870821082",
+        allowCall: true,
+      },
+    ],
+  },
+];
+
 export const contact = {
   person: "Kunal Suri",
-  role: "Manager – Operations & Sales",
+  role: "Co-Founder & Manager – Operations",
   phoneDisplay: "+91 99871 17974",
   phoneHref: "tel:+919987117974",
   whatsappHref: "https://wa.me/919987117974",
@@ -94,32 +158,73 @@ export const extendedNetwork = [
 ];
 
 /** [lon, lat] for map plotting */
-export const indiaCities: { name: string; at: [number, number]; hub?: boolean }[] = [
-  { name: "Delhi", at: [77.2, 28.6], hub: true },
-  { name: "Mumbai", at: [72.88, 19.08], hub: true },
-  { name: "Bengaluru", at: [77.59, 12.97], hub: true },
-  { name: "Chennai", at: [80.27, 13.08], hub: true },
-  { name: "Kolkata", at: [88.36, 22.57], hub: true },
-  { name: "Hyderabad", at: [78.49, 17.39], hub: true },
-  { name: "Pune", at: [73.86, 18.52], hub: true },
-  { name: "Ahmedabad", at: [72.57, 23.02], hub: true },
-  { name: "Jaipur", at: [75.79, 26.91], hub: true },
-  { name: "Agra", at: [78.01, 27.18], hub: true },
-  { name: "Goa", at: [73.83, 15.49], hub: true },
-  { name: "Kochi", at: [76.27, 9.93], hub: true },
-  { name: "Surat", at: [72.83, 21.17] },
-  { name: "Chandigarh", at: [76.78, 30.73] },
-  { name: "Indore", at: [75.86, 22.72] },
-  { name: "Lucknow", at: [80.95, 26.85] },
-  { name: "Coimbatore", at: [76.96, 11.02] },
-  { name: "Visakhapatnam", at: [83.3, 17.69] },
-  { name: "Guwahati", at: [91.74, 26.14] },
-  { name: "Jammu", at: [74.86, 32.73] },
-  { name: "Srinagar", at: [74.8, 34.08] },
-  { name: "Varanasi", at: [82.97, 25.32] },
-  { name: "Amritsar", at: [74.87, 31.63] },
-  { name: "Udaipur", at: [73.71, 24.58] },
+export const indiaCities: { name: string; at: [number, number]; hub?: boolean; state?: string }[] = [
+  { name: "Delhi", at: [77.2, 28.6], hub: true, state: "Delhi NCR" },
+  { name: "Mumbai", at: [72.88, 19.08], hub: true, state: "Maharashtra" },
+  { name: "Bengaluru", at: [77.59, 12.97], hub: true, state: "Karnataka" },
+  { name: "Chennai", at: [80.27, 13.08], hub: true, state: "Tamil Nadu" },
+  { name: "Kolkata", at: [88.36, 22.57], hub: true, state: "West Bengal" },
+  { name: "Hyderabad", at: [78.49, 17.39], hub: true, state: "Telangana" },
+  { name: "Pune", at: [73.86, 18.52], hub: true, state: "Maharashtra" },
+  { name: "Ahmedabad", at: [72.57, 23.02], hub: true, state: "Gujarat" },
+  { name: "Jaipur", at: [75.79, 26.91], hub: true, state: "Rajasthan" },
+  { name: "Chandigarh", at: [76.78, 30.73], hub: true, state: "Punjab / Haryana" },
+  { name: "Lucknow", at: [80.95, 26.85], hub: true, state: "Uttar Pradesh" },
+  { name: "Kochi", at: [76.27, 9.93], hub: true, state: "Kerala" },
+  { name: "Goa", at: [73.83, 15.49], hub: true, state: "Goa" },
+  { name: "Agra", at: [78.01, 27.18], state: "Uttar Pradesh" },
+  { name: "Surat", at: [72.83, 21.17], state: "Gujarat" },
+  { name: "Indore", at: [75.86, 22.72], state: "Madhya Pradesh" },
+  { name: "Bhopal", at: [77.41, 23.25], state: "Madhya Pradesh" },
+  { name: "Nagpur", at: [79.08, 21.14], state: "Maharashtra" },
+  { name: "Coimbatore", at: [76.96, 11.02], state: "Tamil Nadu" },
+  { name: "Visakhapatnam", at: [83.3, 17.69], state: "Andhra Pradesh" },
+  { name: "Vijayawada", at: [80.64, 16.50], state: "Andhra Pradesh" },
+  { name: "Vadodara", at: [73.18, 22.30], state: "Gujarat" },
+  { name: "Rajkot", at: [70.80, 22.30], state: "Gujarat" },
+  { name: "Patna", at: [85.13, 25.59], state: "Bihar" },
+  { name: "Bhubaneswar", at: [85.82, 20.29], state: "Odisha" },
+  { name: "Guwahati", at: [91.74, 26.14], state: "Assam" },
+  { name: "Varanasi", at: [82.97, 25.32], state: "Uttar Pradesh" },
+  { name: "Amritsar", at: [74.87, 31.63], state: "Punjab" },
+  { name: "Jalandhar", at: [75.57, 31.32], state: "Punjab" },
+  { name: "Ludhiana", at: [75.85, 30.90], state: "Punjab" },
+  { name: "Udaipur", at: [73.71, 24.58], state: "Rajasthan" },
+  { name: "Jodhpur", at: [73.02, 26.23], state: "Rajasthan" },
+  { name: "Dehradun", at: [78.03, 30.31], state: "Uttarakhand" },
+  { name: "Haridwar / Rishikesh", at: [78.16, 29.94], state: "Uttarakhand" },
+  { name: "Shimla", at: [77.17, 31.10], state: "Himachal Pradesh" },
+  { name: "Srinagar", at: [74.8, 34.08], state: "Jammu & Kashmir" },
+  { name: "Jammu", at: [74.86, 32.73], state: "Jammu & Kashmir" },
+  { name: "Thiruvananthapuram", at: [76.93, 8.52], state: "Kerala" },
+  { name: "Mangalore", at: [74.85, 12.91], state: "Karnataka" },
+  { name: "Mysuru", at: [76.63, 12.29], state: "Karnataka" },
+  { name: "Nashik", at: [73.78, 19.99], state: "Maharashtra" },
+  { name: "Aurangabad", at: [75.34, 19.87], state: "Maharashtra" },
+  { name: "Madurai", at: [78.11, 9.92], state: "Tamil Nadu" },
+  { name: "Tiruchirappalli", at: [78.70, 10.79], state: "Tamil Nadu" },
+  { name: "Raipur", at: [81.62, 21.25], state: "Chhattisgarh" },
+  { name: "Ranchi", at: [85.33, 23.34], state: "Jharkhand" },
+  { name: "Kanpur", at: [80.33, 26.44], state: "Uttar Pradesh" },
+  { name: "Prayagraj", at: [81.84, 25.43], state: "Uttar Pradesh" },
+  { name: "Gwalior", at: [78.18, 26.21], state: "Madhya Pradesh" },
+  { name: "Jabalpur", at: [79.98, 23.18], state: "Madhya Pradesh" },
+  { name: "Noida / Greater Noida", at: [77.39, 28.53], state: "Uttar Pradesh" },
+  { name: "Gurugram (Gurgaon)", at: [77.03, 28.46], state: "Haryana" },
 ];
+
+const CITY_ID_OVERRIDES: Record<string, string> = {
+  Mumbai: "a0000000-0000-4000-8000-000000000003",
+  Pune: "a0000000-0000-4000-8000-000000000004",
+};
+
+export const clientCities = indiaCities.map((city, index) => ({
+  id:
+    CITY_ID_OVERRIDES[city.name] ??
+    `a0000000-0000-4000-8000-${String(20 + index).padStart(12, "0")}`,
+  name: city.name,
+  state: city.state,
+}));
 
 export const worldDestinations: { name: string; at: [number, number] }[] = [
   { name: "Dubai", at: [55.27, 25.2] },

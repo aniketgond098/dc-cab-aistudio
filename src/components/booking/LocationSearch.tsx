@@ -1,10 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CatalogLookupError,
   findCatalogMatch,
+  findNearestCatalogLocation,
   searchCatalogLocations,
   type CatalogLocation,
 } from "./catalog-location-match";
+import {
+  defaultGeocodingProvider,
+  type GeocodingProvider,
+  type GeocodingSuggestion,
+} from "@/lib/map/geocoding";
 
 export type JourneyLocation = {
   id?: string;
@@ -15,41 +21,69 @@ export type JourneyLocation = {
   bookable: boolean;
 };
 
-type MapboxSuggestion = {
-  mapbox_id: string;
-  name: string;
-  place_formatted?: string;
-  coordinates: [number, number];
-};
-
-const MAPBOX_TOKEN = import.meta.env["VITE_MAPBOX_ACCESS_TOKEN"];
+export type { GeocodingSuggestion };
 
 export function LocationSearch({
   label,
   value,
   onChange,
+  cityLocations,
+  cityName,
+  placeholder,
+  geocodingProvider = defaultGeocodingProvider,
 }: {
   label: string;
   value: JourneyLocation | null;
   onChange: (location: JourneyLocation | null) => void;
+  cityLocations?: CatalogLocation[];
+  cityName?: string;
+  placeholder?: string;
+  geocodingProvider?: GeocodingProvider;
 }) {
   const [query, setQuery] = useState(value?.label ?? "");
   const [catalogLocations, setCatalogLocations] = useState<CatalogLocation[]>([]);
-  const [suggestions, setSuggestions] = useState<MapboxSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<GeocodingSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [catalogSearching, setCatalogSearching] = useState(false);
-  const [mapboxSearching, setMapboxSearching] = useState(false);
+  const [geocodingSearching, setGeocodingSearching] = useState(false);
   const [catalogError, setCatalogError] = useState("");
-  const [mapboxError, setMapboxError] = useState("");
+  const [geocodingError, setGeocodingError] = useState("");
   const [selectionError, setSelectionError] = useState("");
   const [retryCount, setRetryCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const selectionRequestRef = useRef(0);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  const isCityScoped = Array.isArray(cityLocations);
+
+  const displayedCatalogLocations = useMemo(() => {
+    if (!isCityScoped) return catalogLocations;
+    if (!query.trim() || (value && value.label === query)) {
+      return cityLocations;
+    }
+    const needle = query.trim().toLowerCase();
+    return cityLocations.filter(
+      (loc) =>
+        loc.name.toLowerCase().includes(needle) ||
+        (loc.address && loc.address.toLowerCase().includes(needle)) ||
+        (loc.kind && loc.kind.toLowerCase().includes(needle)),
+    );
+  }, [isCityScoped, cityLocations, catalogLocations, query, value]);
 
   useEffect(() => {
     setQuery(value?.label ?? "");
   }, [value?.id, value?.label]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(
     () => () => {
@@ -62,108 +96,76 @@ export function LocationSearch({
   useEffect(() => {
     if (!open || query.trim().length < 2) {
       abortRef.current?.abort();
-      setCatalogLocations([]);
+      if (!isCityScoped) setCatalogLocations([]);
       setSuggestions([]);
       setCatalogSearching(false);
-      setMapboxSearching(false);
+      setGeocodingSearching(false);
       return;
     }
-    setCatalogLocations([]);
+
+    if (value && value.label === query) {
+      return;
+    }
+
+    if (!isCityScoped) {
+      setCatalogLocations([]);
+      setCatalogSearching(true);
+    }
     setSuggestions([]);
-    setCatalogSearching(true);
-    setMapboxSearching(Boolean(MAPBOX_TOKEN));
+    setGeocodingSearching(true);
+
     let active = true;
     const controller = new AbortController();
     abortRef.current?.abort();
     abortRef.current = controller;
-    const timer = window.setTimeout(() => {
-      void searchCatalogLocations(query.trim(), controller.signal)
-        .then((locations) => {
-          if (active) {
-            setCatalogLocations(locations);
-            setCatalogError("");
-            setCatalogSearching(false);
-          }
-        })
-        .catch(() => {
-          if (active && !controller.signal.aborted) {
-            setCatalogError("DC Cabs locations are temporarily unavailable. Please try again.");
-            setCatalogSearching(false);
-          }
-        });
 
-      if (!MAPBOX_TOKEN) {
-        setSuggestions([]);
-        setMapboxSearching(false);
-        return;
+    const timer = window.setTimeout(() => {
+      // 1. Search authoritative DC Cabs catalog (when not city-scoped)
+      if (!isCityScoped) {
+        void searchCatalogLocations(query.trim(), controller.signal)
+          .then((locations) => {
+            if (active) {
+              setCatalogLocations(locations);
+              setCatalogError("");
+              setCatalogSearching(false);
+            }
+          })
+          .catch(() => {
+            if (active && !controller.signal.aborted) {
+              setCatalogError("DC Cabs locations are temporarily unavailable. Please try again.");
+              setCatalogSearching(false);
+            }
+          });
       }
-      const mapboxParams = new URLSearchParams({
-        q: query.trim().replaceAll(";", " "),
-        language: "en",
-        country: "in",
-        worldview: "in",
-        limit: "6",
-        autocomplete: "true",
-        access_token: MAPBOX_TOKEN,
-      });
-      void fetch(`https://api.mapbox.com/search/geocode/v6/forward?${mapboxParams}`, {
-        signal: controller.signal,
-      })
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Location search is temporarily unavailable.");
-          const body = (await response.json()) as {
-            features?: {
-              properties?: {
-                mapbox_id?: string;
-                name?: string;
-                place_formatted?: string;
-              };
-              geometry?: { coordinates?: number[] };
-            }[];
-          };
+
+      // 2. Search geographic places & doorstep addresses via Geocoding provider
+      const geocodeQuery = isCityScoped && cityName
+        ? `${query.trim()}, ${cityName}, India`
+        : query.trim();
+
+      void geocodingProvider
+        .search(geocodeQuery, controller.signal)
+        .then((results) => {
           if (active) {
-            setSuggestions(
-              (body.features ?? []).flatMap((feature) => {
-                const mapboxId = feature.properties?.mapbox_id;
-                const name = feature.properties?.name;
-                const coordinates = feature.geometry?.coordinates;
-                if (
-                  typeof mapboxId !== "string" ||
-                  typeof name !== "string" ||
-                  !coordinates ||
-                  coordinates.length !== 2 ||
-                  !coordinates.every(Number.isFinite)
-                )
-                  return [];
-                return [
-                  {
-                    mapbox_id: mapboxId,
-                    name,
-                    ...(feature.properties?.place_formatted
-                      ? { place_formatted: feature.properties.place_formatted }
-                      : {}),
-                    coordinates: [coordinates[0]!, coordinates[1]!] as [number, number],
-                  },
-                ];
-              }),
-            );
-            setMapboxError("");
-            setMapboxSearching(false);
+            setSuggestions(results);
+            setGeocodingError("");
+            setGeocodingSearching(false);
           }
         })
         .catch(() => {
           if (active && !controller.signal.aborted) {
-            setMapboxError("Additional place suggestions are temporarily unavailable.");
-            setMapboxSearching(false);
+            setGeocodingError("Additional place suggestions are temporarily unavailable.");
+            setGeocodingSearching(false);
           }
         });
     }, 300);
+
     return () => {
       active = false;
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, retryCount, open]);
+  }, [query, retryCount, open, geocodingProvider, isCityScoped, cityName, value]);
 
   function selectCatalog(entry: CatalogLocation) {
     selectionRequestRef.current += 1;
@@ -186,60 +188,115 @@ export function LocationSearch({
     setCatalogLocations([]);
     setSuggestions([]);
     setCatalogSearching(false);
-    setMapboxSearching(false);
+    setGeocodingSearching(false);
     setCatalogError("");
-    setMapboxError("");
+    setGeocodingError("");
     setSelectionError("");
   }
 
-  async function selectMapbox(suggestion: MapboxSuggestion) {
-    if (!MAPBOX_TOKEN) return;
+  function selectCustomAddress(customText: string) {
+    if (!isCityScoped || !cityLocations?.length) {
+      if (suggestions.length > 0) {
+        void selectSuggestion(suggestions[0]);
+      }
+      return;
+    }
+    const defaultCityLocation =
+      cityLocations.find((loc) => loc.kind === "city_zone" || loc.kind === "doorstep") ??
+      cityLocations[0];
+    const coords: [number, number] | null =
+      defaultCityLocation && defaultCityLocation.longitude !== null && defaultCityLocation.latitude !== null
+        ? [Number(defaultCityLocation.longitude), Number(defaultCityLocation.latitude)]
+        : null;
+
+    const chosen: JourneyLocation = {
+      id: defaultCityLocation.id,
+      cityId: defaultCityLocation.city_id,
+      label: customText,
+      context: `Doorstep address in ${cityName ?? "selected city"}`,
+      coordinates: coords,
+      bookable: true,
+    };
+    setQuery(chosen.label);
+    onChange(chosen);
+    setOpen(false);
+    setCatalogError("");
+    setGeocodingError("");
+    setSelectionError("");
+  }
+
+  async function selectSuggestion(suggestion: GeocodingSuggestion) {
     const selectionRequest = ++selectionRequestRef.current;
     setBusy(true);
-    setMapboxError("");
+    setGeocodingError("");
     setSelectionError("");
+
     try {
       const coordinates = suggestion.coordinates;
       if (selectionRequest !== selectionRequestRef.current) return;
-      const catalogMatch =
+
+      let catalogMatch =
         (await findCatalogMatch(suggestion.name, coordinates)) ??
-        (suggestion.place_formatted
-          ? await findCatalogMatch(suggestion.place_formatted, coordinates)
+        (suggestion.placeFormatted
+          ? await findCatalogMatch(suggestion.placeFormatted, coordinates)
           : null);
+
+      if (!catalogMatch && coordinates) {
+        catalogMatch = await findNearestCatalogLocation(coordinates);
+      }
+
       if (selectionRequest !== selectionRequestRef.current) return;
+
+      // In city-scoped mode, custom address / home in the city is bookable!
+      // Assign to the city's active doorstep or primary location ID.
+      const defaultCityLocation =
+        cityLocations?.find((loc) => loc.kind === "city_zone" || loc.kind === "doorstep") ??
+        cityLocations?.[0];
+
+      const chosenId = catalogMatch?.id ?? (isCityScoped ? defaultCityLocation?.id : undefined);
+      const chosenCityId =
+        catalogMatch?.city_id ?? (isCityScoped ? (defaultCityLocation?.city_id ?? cityLocations?.[0]?.city_id) : undefined);
+      const isBookable = Boolean(chosenId);
+
       const chosen: JourneyLocation = {
-        ...(catalogMatch ? { id: catalogMatch.id, cityId: catalogMatch.city_id } : {}),
-        label: catalogMatch?.name ?? suggestion.name,
+        ...(chosenId ? { id: chosenId } : {}),
+        ...(chosenCityId ? { cityId: chosenCityId } : {}),
+        label: suggestion.name,
         context: catalogMatch
           ? "Matched to an active DC Cabs location"
-          : (suggestion.place_formatted ?? "Mapbox location"),
+          : (suggestion.placeFormatted ?? (isCityScoped && cityName ? `Address in ${cityName}` : "Place location")),
         coordinates,
-        bookable: Boolean(catalogMatch),
+        bookable: isBookable,
       };
+
       setQuery(chosen.label);
       onChange(chosen);
       setOpen(false);
       setCatalogError("");
-      if (!catalogMatch)
+
+      if (!isBookable) {
         setSelectionError(
           "This location is not available for online booking yet. Choose a listed DC Cabs location or contact our team.",
         );
+      }
     } catch (cause) {
       if (selectionRequest !== selectionRequestRef.current) return;
-      if (cause instanceof CatalogLookupError) setCatalogError(cause.message);
-      else
-        setMapboxError(
+      if (cause instanceof CatalogLookupError) {
+        setCatalogError(cause.message);
+      } else {
+        setGeocodingError(
           cause instanceof Error
             ? cause.message
             : "Location search is unavailable. Please try again.",
         );
+      }
     } finally {
       if (selectionRequest === selectionRequestRef.current) setBusy(false);
     }
   }
 
   return (
-    <div className="relative">
+    <div ref={wrapperRef} className="relative">
       <label className="eyebrow block text-foreground/60" htmlFor={`location-${label}`}>
         {label}
       </label>
@@ -248,19 +305,27 @@ export function LocationSearch({
         className="mt-2 w-full border border-border bg-background px-4 py-4 text-base text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary"
         autoComplete="off"
         value={query}
-        placeholder="Search an airport, address, hotel or landmark"
+        placeholder={
+          placeholder ??
+          (isCityScoped
+            ? cityName
+              ? `Search home address, hotel, colony or airport in ${cityName}…`
+              : "Search address or place…"
+            : "Search any dropoff address, airport, hotel, city or landmark…")
+        }
         aria-expanded={open}
         aria-controls={`location-options-${label}`}
         role="combobox"
         aria-autocomplete="list"
         onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
         onChange={(event) => {
           selectionRequestRef.current += 1;
           setBusy(false);
           setQuery(event.target.value);
           onChange(null);
           setCatalogError("");
-          setMapboxError("");
+          setGeocodingError("");
           setSelectionError("");
           setOpen(true);
         }}
@@ -268,33 +333,49 @@ export function LocationSearch({
           if (event.key === "Escape") setOpen(false);
         }}
       />
-      {open && query.trim().length >= 2 ? (
+      {open && (isCityScoped ? true : query.trim().length >= 2) ? (
         <div
           id={`location-options-${label}`}
           role="listbox"
-          className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto border border-border bg-charcoal shadow-2xl"
+          className="absolute z-30 mt-1 max-h-80 w-full overflow-y-auto border border-border bg-charcoal shadow-2xl"
         >
-          {catalogLocations.length ? (
+          {isCityScoped && !query.trim() ? (
+            <div className="border-b border-border bg-surface/40 px-4 py-2.5 text-xs text-muted-foreground">
+              💡 Type your exact home address, hotel, apartment, or colony in {cityName} above, or choose a hub below.
+            </div>
+          ) : null}
+
+          {displayedCatalogLocations.length ? (
             <p className="border-b border-border px-4 py-2 text-[0.65rem] font-bold uppercase tracking-[0.16em] text-primary-tint">
-              DC Cabs locations
+              {isCityScoped && cityName ? `${cityName} Key Hubs & Locations` : "DC Cabs locations"}
             </p>
           ) : null}
-          {catalogLocations.map((entry) => (
+          {displayedCatalogLocations.map((entry) => (
             <button
               type="button"
               role="option"
-              aria-selected={false}
+              aria-selected={value?.id === entry.id}
               key={entry.id}
               onClick={() => selectCatalog(entry)}
               className="block w-full border-b border-border px-4 py-3 text-left transition hover:bg-surface focus:bg-surface focus:outline-none"
             >
-              <span className="block text-sm font-semibold">{entry.name}</span>
-              <span className="mt-1 block text-xs text-primary-tint">DC Cabs location</span>
+              <div className="flex items-center justify-between">
+                <span className="block text-sm font-semibold text-foreground">{entry.name}</span>
+                {entry.kind === "airport" ? (
+                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">Airport</span>
+                ) : entry.kind === "railway_station" ? (
+                  <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">Station</span>
+                ) : null}
+              </div>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {entry.address ? `${entry.address} · DC Cabs location` : "DC Cabs location"}
+              </span>
             </button>
           ))}
+
           {suggestions.length ? (
             <p className="border-b border-border px-4 py-2 text-[0.65rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-              Other places · availability checked before booking
+              {isCityScoped ? `Addresses & Localities in ${cityName ?? "city"}` : "Other places · availability checked before booking"}
             </p>
           ) : null}
           {suggestions.map((suggestion) => (
@@ -302,27 +383,52 @@ export function LocationSearch({
               type="button"
               role="option"
               aria-selected={false}
-              key={suggestion.mapbox_id}
+              key={suggestion.id}
               disabled={busy}
-              onClick={() => void selectMapbox(suggestion)}
+              onClick={() => void selectSuggestion(suggestion)}
               className="block w-full border-b border-border px-4 py-3 text-left transition hover:bg-surface focus:bg-surface focus:outline-none disabled:opacity-50"
             >
-              <span className="block text-sm font-semibold">{suggestion.name}</span>
+              <div className="flex items-center justify-between">
+                <span className="block text-sm font-semibold text-foreground">{suggestion.name}</span>
+                {isCityScoped ? (
+                  <span className="text-[10px] text-emerald-400 font-medium">Doorstep bookable</span>
+                ) : null}
+              </div>
               <span className="mt-1 block text-xs text-muted-foreground">
-                {suggestion.place_formatted ?? "Additional place suggestion"}
+                {suggestion.placeFormatted ?? "Address / Place location"}
               </span>
-              <span className="mt-1 block text-[0.65rem] text-muted-foreground">
-                We’ll confirm whether this place is available for online booking.
-              </span>
+              {!isCityScoped ? (
+                <span className="mt-1 block text-[0.65rem] text-muted-foreground">
+                  We’ll confirm whether this place is available for online booking.
+                </span>
+              ) : null}
             </button>
           ))}
-          {!catalogLocations.length && !suggestions.length ? (
+
+          {isCityScoped && query.trim().length >= 2 && !displayedCatalogLocations.some(l => l.name.toLowerCase() === query.trim().toLowerCase()) ? (
+            <button
+              type="button"
+              role="option"
+              aria-selected={false}
+              onClick={() => selectCustomAddress(query.trim())}
+              className="block w-full border-b border-border bg-surface/30 px-4 py-3 text-left transition hover:bg-surface focus:bg-surface focus:outline-none"
+            >
+              <span className="block text-sm font-semibold text-primary">
+                📍 Use &ldquo;{query.trim()}&rdquo; as doorstep address
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Doorstep pickup or drop anywhere in {cityName ?? "this city"}
+              </span>
+            </button>
+          ) : null}
+
+          {!displayedCatalogLocations.length && !suggestions.length ? (
             <p className="px-4 py-3 text-sm text-muted-foreground">
-              {busy || catalogSearching || mapboxSearching
-                ? "Searching…"
-                : MAPBOX_TOKEN
-                  ? "No matching places found."
-                  : "No matching DC Cabs locations found."}
+              {busy || catalogSearching || geocodingSearching
+                ? "Searching places…"
+                : isCityScoped
+                  ? `No matching places found in ${cityName ?? "this city"}. You can type your exact address above.`
+                  : "No matching places found."}
             </p>
           ) : null}
         </div>
@@ -352,25 +458,19 @@ export function LocationSearch({
           {selectionError}
         </p>
       ) : null}
-      {mapboxError ? (
+      {geocodingError ? (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
-          {mapboxError}{" "}
+          {geocodingError}{" "}
           <button
             type="button"
             onClick={() => {
-              setMapboxError("");
+              setGeocodingError("");
               setRetryCount((count) => count + 1);
             }}
             className="underline underline-offset-2"
           >
             Try again
           </button>
-        </p>
-      ) : null}
-      {!MAPBOX_TOKEN ? (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Additional place suggestions are unavailable right now. DC Cabs locations remain
-          searchable.
         </p>
       ) : null}
     </div>

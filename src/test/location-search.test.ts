@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Mapbox catalog validation", () => {
+describe("Geocoding catalog validation", () => {
   it("returns a catalog match for a successful lookup with a nearby location", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [location] })));
 

@@ -5,7 +5,7 @@ const activePickup = { id: "pickup-1", bookable: true };
 const activeDestination = { id: "destination-1", bookable: true };
 
 describe("booking journey readiness", () => {
-  it.each(["Mapbox token unavailable", "Mapbox Directions failed"])(
+  it.each(["map preview unavailable", "routing service failed"])(
     "allows a valid catalog journey to continue when %s",
     () => {
       const pickupAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();

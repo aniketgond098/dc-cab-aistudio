@@ -49,14 +49,23 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("mapbox-gl", () => ({
+vi.mock("maplibre-gl", () => ({
   default: {
     Map: mocks.Map,
     Marker: mocks.Marker,
     NavigationControl: mocks.NavigationControl,
     LngLatBounds: mocks.LngLatBounds,
-    accessToken: "",
+    setWorkerUrl: vi.fn(),
   },
+  Map: mocks.Map,
+  Marker: mocks.Marker,
+  NavigationControl: mocks.NavigationControl,
+  LngLatBounds: mocks.LngLatBounds,
+  setWorkerUrl: vi.fn(),
+}));
+
+vi.mock("maplibre-gl/dist/maplibre-gl-worker.mjs?url", () => ({
+  default: "/mock-maplibre-worker.js",
 }));
 
 afterEach(() => {
@@ -68,9 +77,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("BookingRouteMap optional coordinates", () => {
+describe("BookingRouteMap with MapLibre GL JS", () => {
   it("keeps a catalog location selected and shows unavailable preview without inventing coordinates", async () => {
-    vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "pk.test-token");
     vi.resetModules();
     const { BookingRouteMap } = await import("@/components/booking/BookingRouteMap");
     const onRoute = vi.fn();
@@ -100,7 +108,6 @@ describe("BookingRouteMap optional coordinates", () => {
   });
 
   it("requests and displays the actual route when both catalog locations have coordinates", async () => {
-    vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "pk.test-token");
     vi.resetModules();
     const { BookingRouteMap } = await import("@/components/booking/BookingRouteMap");
     const onRoute = vi.fn();
@@ -108,6 +115,7 @@ describe("BookingRouteMap optional coordinates", () => {
       async (_input: RequestInfo | URL) =>
         new Response(
           JSON.stringify({
+            code: "Ok",
             routes: [
               {
                 distance: 7600,
@@ -115,8 +123,8 @@ describe("BookingRouteMap optional coordinates", () => {
                 geometry: {
                   type: "LineString",
                   coordinates: [
-                    [72.86, 19.09],
-                    [72.88, 19.1],
+                    [72.855744, 19.092617],
+                    [72.865725, 19.067115],
                   ],
                 },
               },
@@ -154,18 +162,22 @@ describe("BookingRouteMap optional coordinates", () => {
         expect(onRoute).toHaveBeenCalledWith({
           distanceKm: 7.6,
           durationHours: 0.4,
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [72.855744, 19.092617],
+              [72.865725, 19.067115],
+            ],
+          },
         }),
       );
     });
-    const directionsUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
-    expect(directionsUrl.hostname).toBe("api.mapbox.com");
-    expect(directionsUrl.pathname).toBe(
-      "/directions/v5/mapbox/driving/72.855744,19.092617;72.865725,19.067115",
-    );
-    expect(directionsUrl.searchParams.get("geometries")).toBe("geojson");
-    expect(directionsUrl.searchParams.get("overview")).toBe("full");
-    expect(directionsUrl.searchParams.get("steps")).toBe("false");
-    expect(directionsUrl.searchParams.get("access_token")).toBe("pk.test-token");
+
+    const routeCallUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(routeCallUrl.pathname).toContain("72.855744,19.092617;72.865725,19.067115");
+    expect(routeCallUrl.searchParams.get("geometries")).toBe("geojson");
+    expect(routeCallUrl.searchParams.get("overview")).toBe("full");
+
     expect(mocks.map.addSource).toHaveBeenCalledWith(
       "dc-route",
       expect.objectContaining({ type: "geojson" }),
@@ -188,8 +200,7 @@ describe("BookingRouteMap optional coordinates", () => {
     ).toHaveClass("absolute", "inset-0");
   });
 
-  it("shows a full route-preview fallback when Mapbox cannot render the map", async () => {
-    vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "pk.test-token");
+  it("shows a full route-preview fallback when MapLibre cannot render the map", async () => {
     vi.resetModules();
     const { BookingRouteMap } = await import("@/components/booking/BookingRouteMap");
     vi.stubGlobal(
@@ -223,7 +234,9 @@ describe("BookingRouteMap optional coordinates", () => {
       expect(mocks.map.on).toHaveBeenCalledWith("error", expect.any(Function)),
     );
     const errorHandler = mocks.map.on.mock.calls.find(([event]) => event === "error")?.[1];
-    act(() => errorHandler?.());
+    await act(async () => {
+      errorHandler?.();
+    });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       /route preview is temporarily unavailable.*continue with your booking/i,
@@ -231,14 +244,13 @@ describe("BookingRouteMap optional coordinates", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
-  it("keeps route failures optional when Mapbox returns unauthorized", async () => {
-    vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "pk.test-token");
+  it("keeps route failures optional when the routing service fails", async () => {
     vi.resetModules();
     const { BookingRouteMap } = await import("@/components/booking/BookingRouteMap");
     const onRoute = vi.fn();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("{}", { status: 401 })),
+      vi.fn(async () => new Response("{}", { status: 503 })),
     );
 
     render(
@@ -271,8 +283,7 @@ describe("BookingRouteMap optional coordinates", () => {
     expect(onRoute).toHaveBeenCalledWith(null);
   });
 
-  it("shows the non-blocking fallback when the public token is unavailable", async () => {
-    vi.stubEnv("VITE_MAPBOX_ACCESS_TOKEN", "");
+  it("shows prompt to select locations when pickup and destination are not set", async () => {
     vi.resetModules();
     const { BookingRouteMap } = await import("@/components/booking/BookingRouteMap");
     const fetchMock = vi.fn();
@@ -281,7 +292,7 @@ describe("BookingRouteMap optional coordinates", () => {
     render(<BookingRouteMap pickup={null} destination={null} onRoute={vi.fn()} />);
 
     expect(
-      screen.getByText(/Your route preview is unavailable right now.*continue to your fare/i),
+      screen.getByText(/Select your pickup and destination to preview your journey/i),
     ).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });

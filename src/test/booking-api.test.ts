@@ -286,6 +286,29 @@ describe("quote endpoint", () => {
     });
     expect(rejectCrossOriginRequest(sameOrigin)).toBeNull();
 
+    // Reverse-proxied environment (Cloud Run / AI Studio preview)
+    const proxiedOrigin = new Request("http://localhost:3000/api/v1/quotes", {
+      method: "POST",
+      headers: {
+        origin: "https://ais-dev-preview.asia-east1.run.app",
+        host: "ais-dev-preview.asia-east1.run.app",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(quotePayload),
+    });
+    expect(rejectCrossOriginRequest(proxiedOrigin)).toBeNull();
+
+    const forwardedOrigin = new Request("http://localhost:3000/api/v1/quotes", {
+      method: "POST",
+      headers: {
+        origin: "https://dccabs.in",
+        "x-forwarded-host": "dccabs.in",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(quotePayload),
+    });
+    expect(rejectCrossOriginRequest(forwardedOrigin)).toBeNull();
+
     const crossOrigin = new Request("https://site.test/api/v1/quotes", {
       method: "POST",
       headers: {

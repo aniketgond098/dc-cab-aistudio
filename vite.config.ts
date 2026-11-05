@@ -15,4 +15,17 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  vite: {
+    ...(process.env.NODE_ENV === "production"
+      ? {}
+      : {
+          server: {
+            // Scoped strictly to development/preview in containerized environments where
+            // reverse-proxy host headers (e.g. *.run.app) must be accepted by the Vite dev server.
+            allowedHosts: true,
+            host: "0.0.0.0",
+            port: 3000,
+          },
+        }),
+  },
 });

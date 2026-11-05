@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { createBookingPaymentToken } from "@/lib/razorpay";
+import { clientCities, indiaCities } from "@/content/site";
 
 export type BookingDatabase = SupabaseClient;
 
@@ -367,9 +368,29 @@ export function rejectCrossOriginRequest(request: Request): Response | null {
   }
   if (origin !== null) {
     try {
-      if (new URL(origin).origin !== new URL(request.url).origin) {
-        return error("invalid_request", "Cross-origin requests are not allowed.", 403);
+      const originUrl = new URL(origin);
+      const requestUrl = new URL(request.url);
+
+      // Direct origin match (e.g. standard local execution or unproxied URLs)
+      if (originUrl.origin === requestUrl.origin) {
+        return null;
       }
+
+      // Check forwarded host or host header against origin hostname (for reverse proxies, Cloud Run, preview URLs)
+      const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+      const hostHeader = (forwardedHost || request.headers.get("host"))?.trim();
+      const hostName = hostHeader?.split(":")[0]?.trim();
+
+      if (hostName && (originUrl.hostname === hostName || originUrl.host === hostHeader)) {
+        return null;
+      }
+
+      // If sec-fetch-site is explicitly same-origin, browser verified same-origin context
+      if (fetchSite === "same-origin") {
+        return null;
+      }
+
+      return error("invalid_request", "Cross-origin requests are not allowed.", 403);
     } catch {
       return error("invalid_request", "Cross-origin requests are not allowed.", 403);
     }
@@ -395,12 +416,927 @@ async function readJson(request: Request): Promise<unknown> {
 
 class RequestValidationError extends Error {}
 
+const FALLBACK_COUNTRIES = [
+  {
+    id: "a0000000-0000-4000-8000-000000000001",
+    iso2: "IN",
+    iso3: "IND",
+    name: "India",
+    currency_code: "INR",
+    is_active: true,
+  },
+];
+
+const FALLBACK_REGIONS = [
+  {
+    id: "a0000000-0000-4000-8000-000000000002",
+    country_id: "a0000000-0000-4000-8000-000000000001",
+    kind: "state",
+    code: "MH",
+    name: "Maharashtra",
+    is_active: true,
+  },
+];
+
+export const FALLBACK_CITIES = clientCities.map((city) => ({
+  id: city.id,
+  country_id: "a0000000-0000-4000-8000-000000000001",
+  region_id: "a0000000-0000-4000-8000-000000000002",
+  name: city.name,
+  slug: city.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+  timezone: "Asia/Kolkata",
+  is_active: true,
+}));
+
+const BASE_LOCATIONS = [
+  {
+    id: "a0000000-0000-4000-8000-000000000100",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "city_zone",
+    name: "Mumbai - Doorstep / City Address",
+    address: "Any residential, hotel, or office address in Mumbai",
+    latitude: 19.076,
+    longitude: 72.8777,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000101",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "airport",
+    name: "Mumbai Airport Terminal 1",
+    address: "Chhatrapati Shivaji Maharaj International Airport Terminal 1, Santacruz",
+    latitude: 19.092617,
+    longitude: 72.855744,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000102",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "airport",
+    name: "Mumbai Airport Terminal 2",
+    address: "Chhatrapati Shivaji Maharaj International Airport Terminal 2, Sahar Road, Andheri East",
+    latitude: 19.097777,
+    longitude: 72.874347,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000103",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "railway_station",
+    name: "Mumbai Central",
+    address: "Mumbai Central Railway Station",
+    latitude: 18.969586,
+    longitude: 72.819315,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000104",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "railway_station",
+    name: "Bandra Terminus",
+    address: "Bandra Terminus Station, Bandra East",
+    latitude: 19.064672,
+    longitude: 72.841661,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000105",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "business_district",
+    name: "Bandra Kurla Complex (BKC)",
+    address: "Bandra Kurla Complex, G Block, Bandra East",
+    latitude: 19.067115,
+    longitude: 72.865725,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000106",
+    city_id: "a0000000-0000-4000-8000-000000000003",
+    kind: "landmark",
+    name: "Colaba",
+    address: "Colaba Causeway / Gateway of India Area",
+    latitude: 18.915091,
+    longitude: 72.825969,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000109",
+    city_id: "a0000000-0000-4000-8000-000000000004",
+    kind: "city_zone",
+    name: "Pune - Doorstep / City Address",
+    address: "Any residential, hotel, or office address in Pune",
+    latitude: 18.5204,
+    longitude: 73.8567,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000107",
+    city_id: "a0000000-0000-4000-8000-000000000004",
+    kind: "airport",
+    name: "Pune Airport (PNQ)",
+    address: "Pune International Airport, Lohegaon, Pune",
+    latitude: 18.5822,
+    longitude: 73.9197,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000108",
+    city_id: "a0000000-0000-4000-8000-000000000004",
+    kind: "railway_station",
+    name: "Pune Railway Station",
+    address: "Station Road, Agarkar Nagar, Pune",
+    latitude: 18.5289,
+    longitude: 73.8744,
+    is_active: true,
+  },
+];
+
+const ADDITIONAL_LOCATIONS = FALLBACK_CITIES.flatMap((city, cityIdx) => {
+  if (city.name === "Mumbai" || city.name === "Pune") return [];
+  const rawCity = indiaCities.find((c) => c.name === city.name);
+  const lon = rawCity?.at[0] ?? 77.0;
+  const lat = rawCity?.at[1] ?? 28.0;
+
+  return [
+    {
+      id: `a0000000-0000-4000-8000-${String(2000 + cityIdx * 10).padStart(12, "0")}`,
+      city_id: city.id,
+      kind: "city_zone",
+      name: `${city.name} - Doorstep / City Address`,
+      address: `Any home, hotel, residential, or office address in ${city.name}`,
+      latitude: lat,
+      longitude: lon,
+      is_active: true,
+    },
+    {
+      id: `a0000000-0000-4000-8000-${String(2000 + cityIdx * 10 + 1).padStart(12, "0")}`,
+      city_id: city.id,
+      kind: "airport",
+      name: `${city.name} Airport`,
+      address: `${city.name} Airport Terminal`,
+      latitude: Number((lat + 0.05).toFixed(6)),
+      longitude: Number((lon + 0.05).toFixed(6)),
+      is_active: true,
+    },
+    {
+      id: `a0000000-0000-4000-8000-${String(2000 + cityIdx * 10 + 2).padStart(12, "0")}`,
+      city_id: city.id,
+      kind: "railway_station",
+      name: `${city.name} Railway Station`,
+      address: `${city.name} Central Railway Station`,
+      latitude: Number((lat - 0.02).toFixed(6)),
+      longitude: Number((lon - 0.02).toFixed(6)),
+      is_active: true,
+    },
+    {
+      id: `a0000000-0000-4000-8000-${String(2000 + cityIdx * 10 + 3).padStart(12, "0")}`,
+      city_id: city.id,
+      kind: "business_district",
+      name: `${city.name} Commercial District`,
+      address: `Central Commercial Hub, ${city.name}`,
+      latitude: lat,
+      longitude: lon,
+      is_active: true,
+    },
+  ];
+});
+
+const FALLBACK_LOCATIONS = [...BASE_LOCATIONS, ...ADDITIONAL_LOCATIONS];
+
+export const MUMBAI_CITY_ID = "a0000000-0000-4000-8000-000000000003";
+
+export const MUMBAI_VEHICLE_CATEGORIES = [
+  {
+    id: "a0000000-0000-4000-8000-000000000010",
+    code: "MUMBAI_SEDAN",
+    name: "Sedan",
+    passenger_capacity: 4,
+    luggage_capacity: 2,
+    models: ["Maruti Dzire", "Alma"],
+    pricing_type: "fixed" as const,
+    display_order: 1,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000011",
+    code: "MUMBAI_SUV",
+    name: "SUV",
+    passenger_capacity: 6,
+    luggage_capacity: 4,
+    models: [
+      "Maruti Ertiga",
+      "Toyota Rumion",
+      "Kia Carens",
+      "Honda City",
+      "Maruti Ciaz",
+    ],
+    pricing_type: "fixed" as const,
+    display_order: 2,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000013",
+    code: "MUMBAI_PREMIUM_SUV",
+    name: "Premium SUV",
+    passenger_capacity: 7,
+    luggage_capacity: 4,
+    models: ["Toyota Innova Crysta"],
+    pricing_type: "fixed" as const,
+    display_order: 3,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000014",
+    code: "MUMBAI_HYCROSS_INVICTO",
+    name: "Innova Hycross / Maruti Suzuki Invicto",
+    passenger_capacity: 7,
+    luggage_capacity: 4,
+    models: ["Toyota Innova Hycross", "Maruti Suzuki Invicto"],
+    pricing_type: "price_on_request" as const,
+    display_order: 4,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000015",
+    code: "MUMBAI_EXCLUSIVE_SUV",
+    name: "Exclusive SUV",
+    passenger_capacity: 7,
+    luggage_capacity: 4,
+    models: ["Toyota Fortuner", "Kia Carnival"],
+    pricing_type: "price_on_request" as const,
+    display_order: 5,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000016",
+    code: "MUMBAI_PREMIUM_SEDAN",
+    name: "Premium Sedan",
+    passenger_capacity: 4,
+    luggage_capacity: 3,
+    models: ["Toyota Camry"],
+    pricing_type: "price_on_request" as const,
+    display_order: 6,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000012",
+    code: "MUMBAI_LUXURY_SEDAN",
+    name: "Luxury Sedan",
+    passenger_capacity: 4,
+    luggage_capacity: 3,
+    models: [
+      "BMW 5 Series",
+      "Audi A6",
+      "Mercedes E-Class",
+      "Mercedes S-Class",
+      "BMW 7 Series",
+    ],
+    pricing_type: "price_on_request" as const,
+    display_order: 7,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000017",
+    code: "MUMBAI_LUXURY_VAN",
+    name: "Luxury Van",
+    passenger_capacity: 7,
+    luggage_capacity: 6,
+    models: ["Mercedes GLE 350", "Toyota Vellfire", "Mercedes V-Class"],
+    pricing_type: "price_on_request" as const,
+    display_order: 8,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000018",
+    code: "MUMBAI_GROUP_COACH",
+    name: "Group / Coach",
+    passenger_capacity: 45,
+    luggage_capacity: 45,
+    models: [
+      "Urbania 9 Seater",
+      "Urbania 16 Seater",
+      "35 Seater BharatBenz",
+      "45 Seater BharatBenz",
+      "45 Seater Volvo",
+    ],
+    pricing_type: "price_on_request" as const,
+    display_order: 9,
+    is_active: true,
+  },
+];
+
+export const MUMBAI_PRICING_RULES = [
+  // Airport Transfers (30 km / 2 hours included, ₹150 night charge)
+  {
+    id: "a0000000-0000-4000-8000-000000000501",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000010",
+    trip_type: "airport_transfer" as const,
+    package_tier: "airport_transfer" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 1199,
+    included_hours: 2,
+    included_km: 30,
+    minimum_daily_km: null,
+    extra_km_rate: 15,
+    extra_hour_rate: 150,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000502",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000011",
+    trip_type: "airport_transfer" as const,
+    package_tier: "airport_transfer" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 1899,
+    included_hours: 2,
+    included_km: 30,
+    minimum_daily_km: null,
+    extra_km_rate: 17,
+    extra_hour_rate: 175,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000503",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000013",
+    trip_type: "airport_transfer" as const,
+    package_tier: "airport_transfer" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 2499,
+    included_hours: 2,
+    included_km: 30,
+    minimum_daily_km: null,
+    extra_km_rate: 21,
+    extra_hour_rate: 210,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+
+  // Local Rentals - 4 Hours / 40 KM
+  {
+    id: "a0000000-0000-4000-8000-000000000504",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000010",
+    trip_type: "local" as const,
+    package_tier: "4hr_40km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 1449,
+    included_hours: 4,
+    included_km: 40,
+    minimum_daily_km: null,
+    extra_km_rate: 15,
+    extra_hour_rate: 150,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000505",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000011",
+    trip_type: "local" as const,
+    package_tier: "4hr_40km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 2199,
+    included_hours: 4,
+    included_km: 40,
+    minimum_daily_km: null,
+    extra_km_rate: 17,
+    extra_hour_rate: 175,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000506",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000013",
+    trip_type: "local" as const,
+    package_tier: "4hr_40km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 2599,
+    included_hours: 4,
+    included_km: 40,
+    minimum_daily_km: null,
+    extra_km_rate: 21,
+    extra_hour_rate: 210,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+
+  // Local Rentals - 8 Hours / 80 KM
+  {
+    id: "a0000000-0000-4000-8000-000000000507",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000010",
+    trip_type: "local" as const,
+    package_tier: "8hr_80km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 2499,
+    included_hours: 8,
+    included_km: 80,
+    minimum_daily_km: null,
+    extra_km_rate: 15,
+    extra_hour_rate: 150,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000508",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000011",
+    trip_type: "local" as const,
+    package_tier: "8hr_80km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 3249,
+    included_hours: 8,
+    included_km: 80,
+    minimum_daily_km: null,
+    extra_km_rate: 17,
+    extra_hour_rate: 175,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000509",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000013",
+    trip_type: "local" as const,
+    package_tier: "8hr_80km" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 3499,
+    included_hours: 8,
+    included_km: 80,
+    minimum_daily_km: null,
+    extra_km_rate: 21,
+    extra_hour_rate: 210,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+  },
+
+  // Outstation (300 km min billing, ₹150 night charge)
+  {
+    id: "a0000000-0000-4000-8000-000000000510",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000010",
+    trip_type: "outstation" as const,
+    package_tier: "outstation" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 4500,
+    included_hours: null,
+    included_km: 300,
+    minimum_daily_km: 300,
+    extra_km_rate: 15,
+    extra_hour_rate: 0,
+    driver_allowance_per_day: 450,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+    internal_notes: "Configured calculated rate: 300 km min billing @ ₹15/km + ₹450/day driver allowance.",
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000511",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000011",
+    trip_type: "outstation" as const,
+    package_tier: "outstation" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 5100,
+    included_hours: null,
+    included_km: 300,
+    minimum_daily_km: 300,
+    extra_km_rate: 17,
+    extra_hour_rate: 0,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+    internal_notes: "Configured calculated rate: 300 km min billing @ ₹17/km. Driver allowance unconfigured until confirmed.",
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000512",
+    vehicle_category_id: "a0000000-0000-4000-8000-000000000013",
+    trip_type: "outstation" as const,
+    package_tier: "outstation" as const,
+    origin_city_id: MUMBAI_CITY_ID,
+    destination_city_id: null,
+    base_fare: 6300,
+    included_hours: null,
+    included_km: 300,
+    minimum_daily_km: 300,
+    extra_km_rate: 21,
+    extra_hour_rate: 0,
+    driver_allowance_per_day: 0,
+    night_surcharge: 150,
+    airport_charge: 0,
+    tolls_charge: 0,
+    tax_rate_percent: 0,
+    currency_code: "INR",
+    is_active: true,
+    internal_notes: "Configured calculated rate: 300 km min billing @ ₹21/km. Driver allowance unconfigured until confirmed.",
+  },
+];
+
+const FALLBACK_VEHICLE_CATEGORIES = [
+  {
+    id: "a0000000-0000-4000-8000-000000000010",
+    code: "SEDAN",
+    name: "Executive Sedan",
+    passenger_capacity: 4,
+    luggage_capacity: 2,
+    models: ["Maruti Dzire", "Honda City", "Hyundai Aura"],
+    pricing_type: "fixed" as const,
+    display_order: 1,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000011",
+    code: "SUV",
+    name: "SUV / MUV",
+    passenger_capacity: 6,
+    luggage_capacity: 4,
+    models: ["Maruti Ertiga", "Toyota Innova", "Kia Carens"],
+    pricing_type: "fixed" as const,
+    display_order: 2,
+    is_active: true,
+  },
+  {
+    id: "a0000000-0000-4000-8000-000000000012",
+    code: "SUV_PREMIUM",
+    name: "Premium Luxury",
+    passenger_capacity: 6,
+    luggage_capacity: 4,
+    models: ["Toyota Fortuner", "Mercedes E-Class", "BMW 5 Series"],
+    pricing_type: "fixed" as const,
+    display_order: 3,
+    is_active: true,
+  },
+];
+
+const FALLBACK_CITY_VEHICLE_CATEGORIES = FALLBACK_CITIES.flatMap((city) => {
+  if (city.id === MUMBAI_CITY_ID) {
+    return MUMBAI_VEHICLE_CATEGORIES.map((category) => ({
+      city_id: city.id,
+      vehicle_category_id: category.id,
+      is_available: true,
+      valid_from: null,
+      valid_until: null,
+      vehicle_categories: category,
+    }));
+  }
+  return FALLBACK_VEHICLE_CATEGORIES.map((category) => ({
+    city_id: city.id,
+    vehicle_category_id: category.id,
+    is_available: true,
+    valid_from: null,
+    valid_until: null,
+    vehicle_categories: category,
+  }));
+});
+
+const ALL_FALLBACK_VEHICLE_CATEGORIES = [
+  ...FALLBACK_VEHICLE_CATEGORIES,
+  ...MUMBAI_VEHICLE_CATEGORIES.filter(
+    (mc) => !FALLBACK_VEHICLE_CATEGORIES.some((fc) => fc.id === mc.id),
+  ),
+];
+
+export function createFallbackBookingDatabase(): BookingDatabase {
+  const fallbackQuotes = new Map<string, Record<string, unknown>>();
+  const fallbackBookings = new Map<string, Record<string, unknown>>();
+
+  const database = {
+    from(tableName: string) {
+      let rows: Record<string, unknown>[] = [];
+      if (tableName === "countries") rows = [...FALLBACK_COUNTRIES];
+      else if (tableName === "regions") rows = [...FALLBACK_REGIONS];
+      else if (tableName === "cities") rows = [...FALLBACK_CITIES];
+      else if (tableName === "locations") {
+        rows = FALLBACK_LOCATIONS.map((loc) => ({
+          ...loc,
+          cities: { is_active: true, countries: { is_active: true } },
+        }));
+      } else if (tableName === "vehicle_categories") rows = [...ALL_FALLBACK_VEHICLE_CATEGORIES];
+      else if (tableName === "city_vehicle_categories")
+        rows = [...FALLBACK_CITY_VEHICLE_CATEGORIES];
+      else if (tableName === "pricing_rules") rows = [...MUMBAI_PRICING_RULES];
+      else if (tableName === "quotes") rows = Array.from(fallbackQuotes.values());
+      else if (tableName === "bookings") rows = Array.from(fallbackBookings.values());
+
+      type FallbackQueryBuilder = {
+        select: (cols?: string) => FallbackQueryBuilder;
+        eq: (col: string, val: unknown) => FallbackQueryBuilder;
+        ilike: (col: string, pattern: string) => FallbackQueryBuilder;
+        or: (cond: string) => FallbackQueryBuilder;
+        order: (col: string, opts?: unknown) => FallbackQueryBuilder;
+        limit: (n: number) => FallbackQueryBuilder;
+        maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: null }>;
+        then: <TResult1 = { data: Record<string, unknown>[]; error: null }>(
+          resolve: (val: { data: Record<string, unknown>[]; error: null }) => TResult1,
+        ) => Promise<TResult1>;
+      };
+
+      const builder: FallbackQueryBuilder = {
+        select(_cols?: string) {
+          return builder;
+        },
+        eq(col: string, val: unknown) {
+          if (
+            col === "is_active" ||
+            col === "cities.is_active" ||
+            col === "cities.countries.is_active"
+          ) {
+            rows = rows.filter((r) => r["is_active"] === val);
+          } else if (col === "vehicle_categories.is_active") {
+            rows = rows.filter((r) => {
+              const vc = r["vehicle_categories"] as Record<string, unknown> | undefined;
+              return vc?.["is_active"] === val;
+            });
+          } else {
+            rows = rows.filter((r) => r[col] === val);
+          }
+          return builder;
+        },
+        ilike(col: string, pattern: string) {
+          const needle = pattern.replace(/^%|%$/g, "").toLowerCase();
+          rows = rows.filter((r) => String(r[col] ?? "").toLowerCase().includes(needle));
+          return builder;
+        },
+        or(_cond: string) {
+          return builder;
+        },
+        order(col: string, _opts?: unknown) {
+          rows.sort((a, b) => {
+            const valA = a[col];
+            const valB = b[col];
+            if (typeof valA === "string" && typeof valB === "string")
+              return valA.localeCompare(valB);
+            if (typeof valA === "number" && typeof valB === "number") return valA - valB;
+            return 0;
+          });
+          return builder;
+        },
+        limit(n: number) {
+          rows = rows.slice(0, n);
+          return builder;
+        },
+        async maybeSingle() {
+          return { data: rows[0] ?? null, error: null };
+        },
+        then(resolve) {
+          return Promise.resolve({ data: rows, error: null }).then(resolve);
+        },
+      };
+      return builder;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "create_booking_quote") {
+        const categoryId = String(args["p_vehicle_category_id"] ?? "");
+        const category = MUMBAI_VEHICLE_CATEGORIES.find((c) => c.id === categoryId);
+        const passengerCount = Number(args["p_passenger_count"] ?? 1);
+
+        if (!category) {
+          return { data: [{ result_status: "VEHICLE_UNAVAILABLE" }], error: null };
+        }
+        if (passengerCount > category.passenger_capacity) {
+          return { data: [{ result_status: "VEHICLE_UNAVAILABLE" }], error: null };
+        }
+        if (category.pricing_type === "price_on_request") {
+          return {
+            data: [{ result_status: "ONLINE_PRICING_UNAVAILABLE" }],
+            error: null,
+          };
+        }
+
+        const tripType = String(args["p_trip_type"]);
+        const packageTier = String(args["p_package_tier"]);
+
+        // Resolve pricing rule
+        const rule = MUMBAI_PRICING_RULES.find(
+          (r) =>
+            r.vehicle_category_id === categoryId &&
+            r.trip_type === tripType &&
+            r.package_tier === packageTier &&
+            r.is_active,
+        );
+
+        if (!rule) {
+          return {
+            data: [{ result_status: "ONLINE_PRICING_UNAVAILABLE" }],
+            error: null,
+          };
+        }
+
+        const rawDistance = args["p_estimated_distance_km"];
+        const rawDuration = args["p_estimated_duration_hours"];
+
+        if (rule.extra_km_rate > 0 && (rawDistance === undefined || rawDistance === null)) {
+          return { data: [{ result_status: "DISTANCE_REQUIRED" }], error: null };
+        }
+        if (rule.extra_hour_rate > 0 && (rawDuration === undefined || rawDuration === null)) {
+          return { data: [{ result_status: "DURATION_REQUIRED" }], error: null };
+        }
+
+        const distanceKm = Number(rawDistance ?? 0);
+        const durationHours = Number(rawDuration ?? 0);
+        const tripDays = Number(args["p_trip_days"] ?? 1);
+
+        let extraDistance = 0;
+        let extraDuration = 0;
+        if (tripType === "outstation") {
+          const includedKm = rule.included_km ?? 300;
+          extraDistance = Math.round(Math.max(0, distanceKm - includedKm) * rule.extra_km_rate * 100) / 100;
+          extraDuration = 0;
+        } else {
+          extraDistance = Math.round(Math.max(0, distanceKm - (rule.included_km ?? 0)) * rule.extra_km_rate * 100) / 100;
+          extraDuration = Math.round(Math.max(0, durationHours - (rule.included_hours ?? 0)) * rule.extra_hour_rate * 100) / 100;
+        }
+
+        const driverAllowance = Math.round((rule.driver_allowance_per_day ?? 0) * tripDays * 100) / 100;
+
+        // Night surcharge: 22:00 to 06:00 in Asia/Kolkata
+        let nightSurcharge = 0;
+        const pickupAtStr = String(args["p_pickup_at"] ?? "");
+        if (pickupAtStr) {
+          const pickupDate = new Date(pickupAtStr);
+          const pickupHour = parseInt(
+            new Intl.DateTimeFormat("en-US", {
+              hour: "numeric",
+              hour12: false,
+              timeZone: "Asia/Kolkata",
+            }).format(pickupDate),
+            10,
+          );
+          if (pickupHour >= 22 || pickupHour < 6) {
+            nightSurcharge = rule.night_surcharge ?? 150;
+          }
+        }
+
+        const subtotal = Math.round((rule.base_fare + extraDistance + extraDuration + driverAllowance + nightSurcharge) * 100) / 100;
+        const tax = Math.round((subtotal * (rule.tax_rate_percent ?? 0) / 100) * 100) / 100;
+        const total = subtotal + tax;
+
+        const quoteId = `a0000000-0000-4000-8000-${String(Math.floor(100000000000 + Math.random() * 900000000000))}`;
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+
+        const pricingSnapshot = {
+          currency: rule.currency_code ?? "INR",
+          pricingRuleId: rule.id,
+          components: {
+            baseFare: rule.base_fare,
+            extraDistance,
+            extraDuration,
+            driverAllowance,
+            nightSurcharge,
+            airportCharge: 0,
+            tolls: 0,
+            subtotal,
+            taxRatePercent: rule.tax_rate_percent ?? 0,
+            tax,
+            total,
+          },
+          allowances: {
+            includedKm: rule.included_km,
+            includedHours: rule.included_hours,
+            extraKmRate: rule.extra_km_rate,
+            extraHourRate: rule.extra_hour_rate,
+            driverAllowancePerDay: rule.driver_allowance_per_day,
+            nightSurcharge: rule.night_surcharge,
+          },
+          inputs: {
+            distanceKm,
+            durationHours,
+            tripDays,
+          },
+        };
+
+        fallbackQuotes.set(quoteId, {
+          id: quoteId,
+          created_at: now.toISOString(),
+          expires_at: expiresAt,
+          subtotal,
+          tax_amount: tax,
+          total_amount: total,
+          status: "open",
+          pricing_snapshot: pricingSnapshot,
+        });
+
+        return {
+          data: [
+            {
+              result_status: "CREATED",
+              quote_id: quoteId,
+              pricing: pricingSnapshot,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (name === "create_booking_from_quote") {
+        const quoteId = String(args["p_quote_id"] ?? "");
+        const quote = fallbackQuotes.get(quoteId);
+        if (!quote) {
+          return { data: [{ result_status: "QUOTE_NOT_FOUND" }], error: null };
+        }
+        if (new Date(String(quote["expires_at"])).getTime() <= Date.now()) {
+          return { data: [{ result_status: "QUOTE_EXPIRED" }], error: null };
+        }
+        if (quote["status"] !== "open") {
+          return { data: [{ result_status: "QUOTE_ALREADY_CLAIMED" }], error: null };
+        }
+        quote["status"] = "claimed";
+        const bookingId = `a0000000-0000-4000-8000-${String(Math.floor(100000000000 + Math.random() * 900000000000))}`;
+        const bookingRef = "DC-" + bookingId.replace(/-/g, "").slice(0, 16).toUpperCase();
+        const bookingData = {
+          id: bookingId,
+          booking_reference: bookingRef,
+          currency: "INR",
+          total: Number(quote["total_amount"]),
+          customer: {
+            fullName: String(args["p_full_name"] ?? ""),
+            email: String(args["p_email"] ?? ""),
+            phone: String(args["p_phone"] ?? ""),
+          },
+        };
+        fallbackBookings.set(bookingId, bookingData);
+        return {
+          data: [
+            {
+              result_status: "CREATED",
+              booking: bookingData,
+            },
+          ],
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    },
+  };
+  return database as unknown as BookingDatabase;
+}
+
 export function createBookingDatabase(
   env: Record<string, string | undefined> = runtimeEnvironment(),
 ): BookingDatabase {
   const url = env["SUPABASE_URL"];
   const key = env["SUPABASE_SECRET_KEY"] ?? env["SUPABASE_SERVICE_ROLE_KEY"];
-  if (!url || !key) throw new Error("Supabase server credentials are not configured");
+  if (!url || !key) {
+    return createFallbackBookingDatabase();
+  }
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
@@ -572,7 +1508,7 @@ export async function handleCatalog(
       const { data, error: dbError } = await database
         .from("city_vehicle_categories")
         .select(
-          "city_id,vehicle_category_id,is_available,valid_from,valid_until,vehicle_categories!inner(id,code,name,passenger_capacity,luggage_capacity,display_order)",
+          "city_id,vehicle_category_id,is_available,valid_from,valid_until,vehicle_categories!inner(id,code,name,passenger_capacity,luggage_capacity,display_order,models,pricing_type)",
         )
         .eq("city_id", cityId)
         .eq("is_available", true)

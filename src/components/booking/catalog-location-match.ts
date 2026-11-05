@@ -74,3 +74,25 @@ export async function findCatalogMatch(query: string, point: [number, number]) {
     .sort((a, b) => a.distance - b.distance)[0];
   return closest && closest.distance <= 0.1 ? closest.entry : null;
 }
+
+export async function findNearestCatalogLocation(point: [number, number]): Promise<CatalogLocation | null> {
+  try {
+    const response = await fetch("/api/v1/catalog/locations");
+    if (!response.ok) return null;
+    const body = (await response.json()) as { data?: unknown };
+    if (!Array.isArray(body.data)) return null;
+    const candidates = body.data.filter(isCatalogLocation).filter(
+      (entry) => entry.latitude !== null && entry.longitude !== null,
+    );
+    if (!candidates.length) return null;
+    const closest = candidates
+      .map((entry) => ({
+        entry,
+        distance: distanceKm(point, [Number(entry.longitude), Number(entry.latitude)]),
+      }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    return closest?.entry ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -15,5 +15,5 @@
 - Never add stats, prices, specs, testimonials or claims not in the client's company material — client requirement for factual accuracy.
 - No `lovable-assets` pointers or `/__l5e/` URLs: the user self-hosts via GitHub pushes, so every image must be a regular file imported from `src/assets` (or `public/`) — Lovable CDN paths don't exist on their host.
 - The customer `/book` flow uses the existing catalog, quote, idempotent booking and payment APIs; server pricing and payment state remain authoritative.
-- Location and vehicle selections must come from the active catalog. Mapbox search and route metrics are estimates and cannot bypass catalog validation or determine fares.
-- Load Mapbox dynamically inside the booking map effect and clean it up; browser tokens, styles and routing remain outside SSR and non-booking pages.
+- Location and vehicle selections must come from the active catalog. MapLibre / OpenStreetMap search and route metrics are estimates and cannot bypass catalog validation or determine fares.
+- Load MapLibre dynamically inside the booking map effect and clean it up; styles, tiles, geocoding and routing services remain outside SSR and non-booking pages.
